@@ -30,6 +30,12 @@ local ChatConfig = {
         "https://serenity-admin-5pra.onrender.com/api/chat",
         "http://localhost:3000/api/chat"
     },
+    ModUrls = {
+        "https://serenityhub.site/api/moderation",
+        "https://www.serenityhub.site/api/moderation",
+        "https://serenity-admin-5pra.onrender.com/api/moderation",
+        "http://localhost:3000/api/moderation"
+    },
     StatsUrls = {
         "https://serenityhub.site/api/stats",
         "https://serenity-admin-5pra.onrender.com/api/stats",
@@ -54,8 +60,10 @@ local RoomsList = {
 -- State
 local currentRoom = "English"
 local isChatMuted = false
+local isPlayerLocallyMuted = false
 local lastMessageId = 0
 local activeBaseUrl = nil
+local activeModUrl = nil
 local lastSendTime = 0
 local isWindowVisible = true
 local isMinimized = false
@@ -170,6 +178,225 @@ local function GetWorkingApiUrl()
     end
     activeBaseUrl = ChatConfig.ApiUrls[1]
     return activeBaseUrl
+end
+
+-- ==============================================================================
+-- Moderation & Anti-Injection Ban Security
+-- ==============================================================================
+local function GetWorkingModUrl()
+    if activeModUrl then return activeModUrl end
+    for _, base in ipairs(ChatConfig.ModUrls) do
+        local testUrl = string.format("%s/status?userId=%s&_t=%d", base, tostring(localPlayer.UserId), os.time())
+        local raw = FetchRaw(testUrl)
+        if raw then
+            local ok, data = pcall(function() return HttpService:JSONDecode(raw) end)
+            if ok and data and data.success then
+                activeModUrl = base
+                return activeModUrl
+            end
+        end
+    end
+    activeModUrl = ChatConfig.ModUrls[1]
+    return activeModUrl
+end
+
+local function CheckPlayerModStatus()
+    local modBase = GetWorkingModUrl()
+    local checkUrl = string.format("%s/status?userId=%s&_t=%d", modBase, tostring(localPlayer.UserId), os.time())
+    local raw = FetchRaw(checkUrl)
+    if raw then
+        local ok, data = pcall(function() return HttpService:JSONDecode(raw) end)
+        if ok and data and data.success then
+            return data
+        end
+    end
+    return nil
+end
+
+local function ShowBanTerminatedScreen()
+    pcall(function()
+        if _G.SerenityGlobalChatGui and _G.SerenityGlobalChatGui.Parent then
+            _G.SerenityGlobalChatGui:Destroy()
+        end
+    end)
+
+    pcall(function()
+        local parent = GetGuiParent()
+        local banGui = Instance.new("ScreenGui")
+        banGui.Name = "SerenityBanTerminationNotice"
+        banGui.ResetOnSpawn = false
+        banGui.DisplayOrder = 999999
+        banGui.Parent = parent
+
+        local card = Instance.new("Frame")
+        card.Size = UDim2.new(0, 480, 0, 160)
+        card.Position = UDim2.new(0.5, -240, 0.5, -80)
+        card.BackgroundColor3 = Color3.fromRGB(18, 12, 16)
+        card.BorderSizePixel = 0
+        card.Parent = banGui
+
+        local stroke = Instance.new("UIStroke")
+        stroke.Color = Color3.fromRGB(255, 60, 60)
+        stroke.Thickness = 2
+        stroke.Parent = card
+
+        local corner = Instance.new("UICorner")
+        corner.CornerRadius = UDim.new(0, 12)
+        corner.Parent = card
+
+        local title = Instance.new("TextLabel")
+        title.Size = UDim2.new(1, -20, 0, 36)
+        title.Position = UDim2.new(0, 10, 0, 12)
+        title.BackgroundTransparency = 1
+        title.Text = "⛔ SERENITY ACCESS TERMINATED"
+        title.TextColor3 = Color3.fromRGB(255, 75, 75)
+        title.Font = Enum.Font.GothamBold
+        title.TextSize = 16
+        title.Parent = card
+
+        local sub = Instance.new("TextLabel")
+        sub.Size = UDim2.new(1, -24, 0, 80)
+        sub.Position = UDim2.new(0, 12, 0, 52)
+        sub.BackgroundTransparency = 1
+        sub.Text = "Your Roblox account has been banned from Serenity Hub.\nAccount ID: " .. tostring(localPlayer.UserId) .. " (" .. tostring(localPlayer.Name) .. ")\n\nYou cannot inject or run any Serenity features on this account.\nPlease contact staff to appeal."
+        sub.TextColor3 = Color3.fromRGB(220, 220, 220)
+        sub.Font = Enum.Font.Gotham
+        sub.TextSize = 13
+        sub.TextWrapped = true
+        sub.Parent = card
+    end)
+end
+
+local isWarningActive = false
+
+local function ShowInGameWarning(warningText)
+    if isWarningActive then return end
+    isWarningActive = true
+
+    local Lighting = game:GetService("Lighting")
+    local blur = Instance.new("BlurEffect")
+    blur.Name = "SerenityWarningBlur"
+    blur.Size = 0
+    blur.Parent = Lighting
+
+    -- Tween blur up to 24
+    TweenService:Create(blur, TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Size = 24 }):Play()
+
+    -- Play warning alert sound
+    pcall(function()
+        local snd = Instance.new("Sound")
+        snd.SoundId = "rbxassetid://138090596"
+        snd.Volume = 0.8
+        snd.Parent = SoundService
+        snd:Play()
+        game:GetService("Debris"):AddItem(snd, 3)
+    end)
+
+    -- Centered Dialog GUI with yellow WARNED lettering
+    local parent = GetGuiParent()
+    local warnGui = Instance.new("ScreenGui")
+    warnGui.Name = "SerenityWarningDialog"
+    warnGui.ResetOnSpawn = false
+    warnGui.DisplayOrder = 999998
+    warnGui.Parent = parent
+
+    local container = Instance.new("Frame")
+    container.Size = UDim2.new(0, 500, 0, 190)
+    container.Position = UDim2.new(0.5, -250, 0.5, -95)
+    container.BackgroundColor3 = Color3.fromRGB(15, 17, 23)
+    container.BorderSizePixel = 0
+    container.BackgroundTransparency = 0.05
+    container.Parent = warnGui
+
+    local stroke = Instance.new("UIStroke")
+    stroke.Color = Color3.fromRGB(255, 215, 0) -- Bright Gold Yellow
+    stroke.Thickness = 2.5
+    stroke.Parent = container
+
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 14)
+    corner.Parent = container
+
+    -- "⚠️ WARNED" in big yellow lettering
+    local headerLbl = Instance.new("TextLabel")
+    headerLbl.Size = UDim2.new(1, -20, 0, 44)
+    headerLbl.Position = UDim2.new(0, 10, 0, 14)
+    headerLbl.BackgroundTransparency = 1
+    headerLbl.Text = "⚠️ WARNED"
+    headerLbl.TextColor3 = Color3.fromRGB(255, 215, 0)
+    headerLbl.Font = Enum.Font.GothamBold
+    headerLbl.TextSize = 28
+    headerLbl.TextXAlignment = Enum.TextXAlignment.Center
+    headerLbl.Parent = container
+
+    -- Sub-label with custom warning text
+    local msgLbl = Instance.new("TextLabel")
+    msgLbl.Size = UDim2.new(1, -36, 0, 70)
+    msgLbl.Position = UDim2.new(0, 18, 0, 62)
+    msgLbl.BackgroundTransparency = 1
+    msgLbl.Text = warningText or "Please follow community guidelines and do not use offensive language."
+    msgLbl.TextColor3 = Color3.fromRGB(245, 245, 245)
+    msgLbl.Font = Enum.Font.GothamSemibold
+    msgLbl.TextSize = 16
+    msgLbl.TextWrapped = true
+    msgLbl.TextXAlignment = Enum.TextXAlignment.Center
+    msgLbl.Parent = container
+
+    -- 5-second countdown progress bar
+    local progressTrack = Instance.new("Frame")
+    progressTrack.Size = UDim2.new(1, -40, 0, 6)
+    progressTrack.Position = UDim2.new(0, 20, 1, -22)
+    progressTrack.BackgroundColor3 = Color3.fromRGB(35, 40, 55)
+    progressTrack.BorderSizePixel = 0
+    progressTrack.Parent = container
+
+    local trackCorner = Instance.new("UICorner")
+    trackCorner.CornerRadius = UDim.new(1, 0)
+    trackCorner.Parent = progressTrack
+
+    local progressFill = Instance.new("Frame")
+    progressFill.Size = UDim2.new(1, 0, 1, 0)
+    progressFill.BackgroundColor3 = Color3.fromRGB(255, 215, 0)
+    progressFill.BorderSizePixel = 0
+    progressFill.Parent = progressTrack
+
+    local fillCorner = Instance.new("UICorner")
+    fillCorner.CornerRadius = UDim.new(1, 0)
+    fillCorner.Parent = progressFill
+
+    -- Animate progress fill down over 5 seconds
+    local tweenProgress = TweenService:Create(progressFill, TweenInfo.new(5, Enum.EasingStyle.Linear), {
+        Size = UDim2.new(0, 0, 1, 0)
+    })
+    tweenProgress:Play()
+
+    -- Auto-dismiss after 5 seconds
+    task.delay(5, function()
+        local tweenBlur = TweenService:Create(blur, TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Size = 0 })
+        local tweenGui = TweenService:Create(container, TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { BackgroundTransparency = 1 })
+        tweenBlur:Play()
+        tweenGui:Play()
+
+        task.wait(0.55)
+        pcall(function() blur:Destroy() end)
+        pcall(function() warnGui:Destroy() end)
+        isWarningActive = false
+    end)
+end
+
+-- ==============================================================================
+-- 🛡️ PRE-EXECUTION ANTI-INJECTION BAN CHECK
+-- ==============================================================================
+-- Halt execution immediately if player is banned
+local startupModStatus = CheckPlayerModStatus()
+if startupModStatus and startupModStatus.isBanned == true then
+    warn("[Serenity Hub] ⛔ SCRIPT ACCESS TERMINATED: Account " .. tostring(localPlayer.UserId) .. " is banned.")
+    ShowBanTerminatedScreen()
+    return -- STOP SCRIPT INJECTION
+end
+
+if startupModStatus and startupModStatus.isMuted == true then
+    isPlayerLocallyMuted = true
 end
 
 -- ==============================================================================
@@ -1062,6 +1289,28 @@ end)
 -- Polling & Message Synchronization
 -- ==============================================================================
 local function FetchNewMessages()
+    -- Live moderation heartbeat check
+    task.spawn(function()
+        local modStatus = CheckPlayerModStatus()
+        if modStatus then
+            if modStatus.isBanned == true then
+                ShowBanTerminatedScreen()
+                return
+            end
+
+            if modStatus.isMuted ~= nil then
+                isPlayerLocallyMuted = modStatus.isMuted
+                if isPlayerLocallyMuted then
+                    chatInput.PlaceholderText = "🔒 You have been muted by an Administrator"
+                end
+            end
+
+            if modStatus.warning and modStatus.warning.message then
+                ShowInGameWarning(modStatus.warning.message)
+            end
+        end
+    end)
+
     local base = GetWorkingApiUrl()
     local url = string.format("%s/messages?after=%d&limit=100&_t=%d", base, lastMessageId, os.time())
     
@@ -1075,7 +1324,7 @@ local function FetchNewMessages()
             muteBadge.Visible = isChatMuted
             if isChatMuted then
                 chatInput.PlaceholderText = "🔒 Global chat is muted (Staff only)"
-            else
+            elseif not isPlayerLocallyMuted then
                 chatInput.PlaceholderText = "Type a message..."
             end
         end
@@ -1137,9 +1386,13 @@ end
 -- Send Chat Message
 -- ==============================================================================
 local function SendChatMessage()
-    if isChatMuted then
+    if isChatMuted or isPlayerLocallyMuted then
         chatInput.Text = ""
-        chatInput.PlaceholderText = "🔒 Chat is currently muted by staff"
+        if isPlayerLocallyMuted then
+            chatInput.PlaceholderText = "🔒 You have been muted by an Administrator"
+        else
+            chatInput.PlaceholderText = "🔒 Chat is currently muted by staff"
+        end
         return
     end
 
@@ -1170,6 +1423,15 @@ local function SendChatMessage()
         local body, status = PostRaw(postUrl, HttpService:JSONEncode(payload))
         if status == 201 or status == 200 then
             FetchNewMessages()
+        elseif status == 403 then
+            -- Muted, banned, or rejected by word filter
+            if body and body:find("banned") then
+                ShowBanTerminatedScreen()
+            elseif body and (body:find("prohibited") or body:find("filter") or body:find("warn")) then
+                ShowInGameWarning("Message blocked: Prohibited language detected.")
+            else
+                chatInput.PlaceholderText = "🔒 Action blocked by moderation system"
+            end
         end
     end)
 end
