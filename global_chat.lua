@@ -763,6 +763,71 @@ local RoomLanguageMap = {
     brazilian = "pt"
 }
 
+local ClientTranslationCache = {}
+local pendingTranslations = {}
+
+local function LiveTranslateMessage(msgId, text, targetLang, callback)
+    if not text or text == "" or not targetLang then return end
+    local cacheKey = targetLang .. ":" .. tostring(msgId)
+    if ClientTranslationCache[cacheKey] then
+        callback(ClientTranslationCache[cacheKey])
+        return
+    end
+
+    if pendingTranslations[cacheKey] then return end
+    pendingTranslations[cacheKey] = true
+
+    task.spawn(function()
+        -- 1. Try Google Translate Client API (Instant auto-detection)
+        local ok, res = pcall(function()
+            local encoded = HttpService:UrlEncode(text)
+            local googleUrl = string.format("https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=%s&dt=t&q=%s", targetLang, encoded)
+            local raw = FetchRaw(googleUrl)
+            if raw then
+                local dOk, decoded = pcall(function() return HttpService:JSONDecode(raw) end)
+                if dOk and type(decoded) == "table" and type(decoded[1]) == "table" then
+                    local translatedText = ""
+                    for _, chunk in ipairs(decoded[1]) do
+                        if type(chunk) == "table" and chunk[1] then
+                            translatedText = translatedText .. tostring(chunk[1])
+                        end
+                    end
+                    if translatedText ~= "" and translatedText ~= text then
+                        return translatedText
+                    end
+                end
+            end
+            return nil
+        end)
+
+        if ok and res then
+            ClientTranslationCache[cacheKey] = res
+            pendingTranslations[cacheKey] = nil
+            callback(res)
+            return
+        end
+
+        -- 2. Try Backend Translate API fallback
+        pcall(function()
+            local base = GetWorkingApiUrl()
+            local postUrl = string.format("%s/translate", base)
+            local postBody = HttpService:JSONEncode({ text = text, targetLang = targetLang })
+            local bRaw, status = PostRaw(postUrl, postBody)
+            if (status == 200 or status == 201) and bRaw then
+                local bOk, bData = pcall(function() return HttpService:JSONDecode(bRaw) end)
+                if bOk and bData and bData.success and bData.translated and bData.translated ~= text then
+                    ClientTranslationCache[cacheKey] = bData.translated
+                    pendingTranslations[cacheKey] = nil
+                    callback(bData.translated)
+                    return
+                end
+            end
+        end)
+
+        pendingTranslations[cacheKey] = nil
+    end)
+end
+
 -- ==============================================================================
 -- Format Mentions (@username) in Vibrant Cyan/Blue
 -- ==============================================================================
@@ -865,7 +930,11 @@ local function CreateMessageRow(msg)
     local rawText = tostring(msg.message or "")
     local isTranslated = false
 
-    if msg.translations and type(msg.translations) == "table" and msg.translations[langKey] then
+    local cacheKey = langKey .. ":" .. tostring(msg.id)
+    if ClientTranslationCache[cacheKey] then
+        rawText = ClientTranslationCache[cacheKey]
+        isTranslated = true
+    elseif msg.translations and type(msg.translations) == "table" and msg.translations[langKey] then
         local tVal = tostring(msg.translations[langKey])
         if tVal and tVal ~= "" and tVal ~= rawText then
             rawText = tVal
@@ -906,6 +975,23 @@ local function CreateMessageRow(msg)
     msgBody.TextXAlignment = Enum.TextXAlignment.Left
     msgBody.TextYAlignment = Enum.TextYAlignment.Top
     msgBody.Parent = row
+
+    -- Live Auto-Translation if not yet translated
+    if not isTranslated and langKey ~= "en" and rawText ~= "" then
+        LiveTranslateMessage(msg.id, msg.message or rawText, langKey, function(translatedResult)
+            if row and row.Parent and (RoomLanguageMap[currentRoom] or "en") == langKey then
+                msgBody.Text = FormatMentions(translatedResult)
+                headerLine.Text = string.format(
+                    "%s<font color=\"rgb(%d,%d,%d)\"><b>%s</b></font>  <font color=\"rgb(130,138,155)\">%s  ·  %s</font>  <font color=\"rgb(80,180,255)\"><i>(translated)</i></font>",
+                    roleTag,
+                    nameColor.R * 255, nameColor.G * 255, nameColor.B * 255,
+                    uName,
+                    gameTag,
+                    timeStr
+                )
+            end
+        end)
+    end
 
     local pad = Instance.new("UIPadding")
     pad.PaddingBottom = UDim.new(0, 4)
