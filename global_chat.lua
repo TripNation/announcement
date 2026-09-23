@@ -1329,6 +1329,20 @@ local function FetchNewMessages()
             end
         end
 
+        if data.cleared then
+            allLoadedMessages = {}
+            lastMessageId = 0
+            if data.messages then
+                for _, msg in ipairs(data.messages) do
+                    local msgId = tonumber(msg.id) or 0
+                    if msgId > lastMessageId then lastMessageId = msgId end
+                    table.insert(allLoadedMessages, msg)
+                end
+            end
+            FilterAndRenderMessages()
+            return
+        end
+
         if data.messages then
             local hasNew = false
             for _, msg in ipairs(data.messages) do
