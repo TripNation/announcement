@@ -37,13 +37,13 @@ local ChatConfig = {
     },
     PollInterval = 2.5,
     CooldownSeconds = 1.5,
-    DefaultRoom = "general",
+    DefaultRoom = "English",
     ToggleKey = Enum.KeyCode.RightShift
 }
 
 -- Rooms list from reference UI (clean pills without red dots)
 local RoomsList = {
-    { id = "general", name = "General" },
+    { id = "English", name = "English" },
     { id = "spanish", name = "Spanish" },
     { id = "indonesian", name = "Indonesian" },
     { id = "philippines", name = "Philippines" },
@@ -52,7 +52,7 @@ local RoomsList = {
 }
 
 -- State
-local currentRoom = "general"
+local currentRoom = "English"
 local isChatMuted = false
 local lastMessageId = 0
 local activeBaseUrl = nil
@@ -755,7 +755,7 @@ MakeDraggable(headerBar, mainWindow)
 MakeDraggable(floatingPill, floatingPill)
 
 local RoomLanguageMap = {
-    general = "en",
+    English = "en",
     spanish = "es",
     indonesian = "id",
     philippines = "tl",
@@ -996,6 +996,23 @@ local function CreateMessageRow(msg)
     local pad = Instance.new("UIPadding")
     pad.PaddingBottom = UDim.new(0, 4)
     pad.Parent = row
+
+    -- Prune oldest UI row if scroll view exceeds 100 messages
+    local rowCount = 0
+    local oldestChild = nil
+    local lowestOrder = math.huge
+    for _, child in ipairs(messagesScroll:GetChildren()) do
+        if child:IsA("Frame") and child.Name:sub(1, 7) == "MsgRow_" then
+            rowCount = rowCount + 1
+            if child.LayoutOrder < lowestOrder then
+                lowestOrder = child.LayoutOrder
+                oldestChild = child
+            end
+        end
+    end
+    if rowCount > 100 and oldestChild then
+        oldestChild:Destroy()
+    end
 end
 
 -- ==============================================================================
@@ -1011,7 +1028,10 @@ function FilterAndRenderMessages()
     local qLower = searchQuery:lower()
     local langKey = RoomLanguageMap[currentRoom] or "en"
 
-    for _, msg in ipairs(allLoadedMessages) do
+    -- Render up to 100 messages maximum (auto-deletes beyond 100)
+    local startIndex = math.max(1, #allLoadedMessages - 99)
+    for i = startIndex, #allLoadedMessages do
+        local msg = allLoadedMessages[i]
         local displayTxt = tostring(msg.message or "")
         if msg.translations and type(msg.translations) == "table" and msg.translations[langKey] then
             displayTxt = tostring(msg.translations[langKey])
@@ -1043,7 +1063,7 @@ end)
 -- ==============================================================================
 local function FetchNewMessages()
     local base = GetWorkingApiUrl()
-    local url = string.format("%s/messages?after=%d&limit=50&_t=%d", base, lastMessageId, os.time())
+    local url = string.format("%s/messages?after=%d&limit=100&_t=%d", base, lastMessageId, os.time())
     
     local raw = FetchRaw(url)
     if not raw then return end
@@ -1072,6 +1092,11 @@ local function FetchNewMessages()
             end
 
             if hasNew then
+                -- Automatically prune messages so only the latest 100 remain
+                while #allLoadedMessages > 100 do
+                    table.remove(allLoadedMessages, 1)
+                end
+
                 FilterAndRenderMessages()
 
                 if not isWindowVisible or isMinimized then
