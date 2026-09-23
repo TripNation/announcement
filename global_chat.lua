@@ -1,20 +1,24 @@
 -- ==============================================================================
--- 💬 SERENITY HUB - GLOBAL CHAT SYSTEM (STANDALONE GUI)
+-- 💬 SERENITY HUB - GLOBAL CHAT SYSTEM (CUSTOM DISCORD / SENA STYLE GUI)
 -- ==============================================================================
--- Connects all players running Serenity Hub across different Roblox games & servers!
--- Works in any Roblox executor (Synapse, Wave, KRNL, Fluxus, Delta, Solara, etc.)
--- Features: Real-time global messaging, player headshots, auto-scroll, anti-spam,
---           draggable window, minimize pill, and differential polling.
+-- Matches the exact dark Discord-style theme:
+-- - Channels & Rooms bar (General, Indonesian, Philippines, Vietnam, Brazilian)
+-- - Live Network status + real-time online counter (🟢 [count] online)
+-- - Circular player headshots, username, current Roblox Game tag & timestamp
+-- - Auto-highlighted @mentions
+-- - Search filter bar + minimize / close controls
+-- - Clean white 'Send' pill button & @ mention insert helper
 -- ==============================================================================
 
 local HttpService = game:GetService("HttpService")
 local TweenService = game:GetService("TweenService")
 local SoundService = game:GetService("SoundService")
 local UserInputService = game:GetService("UserInputService")
+local MarketplaceService = game:GetService("MarketplaceService")
 local Players = game:GetService("Players")
 local localPlayer = Players.LocalPlayer
 
--- Prevent duplicate instances if executed multiple times
+-- Prevent duplicate instances
 if _G.SerenityGlobalChatGui and _G.SerenityGlobalChatGui.Parent then
     pcall(function() _G.SerenityGlobalChatGui:Destroy() end)
 end
@@ -26,20 +30,47 @@ local ChatConfig = {
         "https://serenity-admin-5pra.onrender.com/api/chat",
         "http://localhost:3000/api/chat"
     },
-    PollInterval = 2.5,              -- Poll for new messages every 2.5 seconds
-    MaxDisplayMessages = 70,         -- Maximum chat bubbles kept in the feed
-    CooldownSeconds = 1.5,           -- Anti-spam cooldown per message
-    SoundEnabled = true,
+    StatsUrls = {
+        "https://serenityhub.site/api/stats",
+        "https://serenity-admin-5pra.onrender.com/api/stats",
+        "http://localhost:3000/api/stats"
+    },
+    PollInterval = 2.5,
+    CooldownSeconds = 1.5,
+    DefaultRoom = "general",
     ToggleKey = Enum.KeyCode.RightShift
 }
 
+-- Rooms list from reference UI
+local RoomsList = {
+    { id = "general", name = "General", hasDot = false },
+    { id = "indonesian", name = "Indonesian", hasDot = true },
+    { id = "philippines", name = "Philippines", hasDot = true },
+    { id = "vietnam", name = "Vietnam", hasDot = true },
+    { id = "brazilian", name = "Brazilian", hasDot = true }
+}
+
 -- State
+local currentRoom = "general"
 local lastMessageId = 0
 local activeBaseUrl = nil
 local lastSendTime = 0
 local isWindowVisible = true
 local isMinimized = false
 local unreadCount = 0
+local currentGameName = "Serenity Game"
+local searchQuery = ""
+local allLoadedMessages = {} -- Cache for searching & filtering
+
+-- Cache current Roblox Game Name
+task.spawn(function()
+    local ok, info = pcall(function()
+        return MarketplaceService:GetProductInfo(game.PlaceId)
+    end)
+    if ok and info and info.Name and info.Name ~= "" then
+        currentGameName = info.Name
+    end
+end)
 
 -- Target GUI container
 local function GetGuiParent()
@@ -122,7 +153,6 @@ local function PostRaw(url, payloadJson)
     return nil, 0
 end
 
--- Resolve working API endpoint
 local function GetWorkingApiUrl()
     if activeBaseUrl then return activeBaseUrl end
     for _, base in ipairs(ChatConfig.ApiUrls) do
@@ -136,40 +166,12 @@ local function GetWorkingApiUrl()
             end
         end
     end
-    -- Fallback to primary domain
     activeBaseUrl = ChatConfig.ApiUrls[1]
     return activeBaseUrl
 end
 
--- Logo asset loader
-local cachedLogoAsset = nil
-local function GetLogoImage()
-    if cachedLogoAsset then return cachedLogoAsset end
-    local getAsset = (syn and syn.custom_asset) or getcustomasset or getsynasset
-    if getAsset and writefile and isfile then
-        local ok, asset = pcall(function()
-            if not isfile("serenity_logo_v2.png") then
-                local imgData = FetchRaw("https://serenityhub.site/serenity_logo_v2.png")
-                    or FetchRaw("https://raw.githubusercontent.com/TripNation/announcement/main/serenity_logo_v2.png")
-                    or FetchRaw("http://localhost:3000/serenity_logo_v2.png")
-                if imgData and #imgData > 200 then
-                    writefile("serenity_logo_v2.png", imgData)
-                end
-            end
-            if isfile("serenity_logo_v2.png") then
-                return getAsset("serenity_logo_v2.png")
-            end
-        end)
-        if ok and asset then
-            cachedLogoAsset = asset
-            return cachedLogoAsset
-        end
-    end
-    return "rbxassetid://10709790644"
-end
-
 -- ==============================================================================
--- GUI Construction
+-- GUI Construction (Sena / Discord Exact Style)
 -- ==============================================================================
 local targetParent = GetGuiParent()
 local screenGui = Instance.new("ScreenGui")
@@ -179,219 +181,460 @@ screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 screenGui.Parent = targetParent
 _G.SerenityGlobalChatGui = screenGui
 
--- Main Chat Window
+-- Main Chat Window Frame
 local mainWindow = Instance.new("Frame")
 mainWindow.Name = "MainWindow"
-mainWindow.Size = UDim2.new(0, 360, 0, 460)
-mainWindow.Position = UDim2.new(0.5, -180, 0.5, -230)
-mainWindow.BackgroundColor3 = Color3.fromRGB(15, 17, 24)
+mainWindow.Size = UDim2.new(0, 560, 0, 480)
+mainWindow.Position = UDim2.new(0.5, -280, 0.5, -240)
+mainWindow.BackgroundColor3 = Color3.fromRGB(15, 17, 23)
 mainWindow.BorderSizePixel = 0
 mainWindow.ClipsDescendants = true
 mainWindow.Parent = screenGui
 
-local windowCorner = Instance.new("UICorner")
-windowCorner.CornerRadius = UDim.new(0, 12)
-windowCorner.Parent = mainWindow
+local winCorner = Instance.new("UICorner")
+winCorner.CornerRadius = UDim.new(0, 10)
+winCorner.Parent = mainWindow
 
-local windowStroke = Instance.new("UIStroke")
-windowStroke.Color = Color3.fromRGB(38, 44, 62)
-windowStroke.Thickness = 1.2
-windowStroke.Parent = mainWindow
+local winStroke = Instance.new("UIStroke")
+winStroke.Color = Color3.fromRGB(32, 36, 46)
+winStroke.Thickness = 1
+winStroke.Parent = mainWindow
 
--- Neon accent top glow bar
-local accentBar = Instance.new("Frame")
-accentBar.Name = "AccentBar"
-accentBar.Size = UDim2.new(1, 0, 0, 3)
-accentBar.Position = UDim2.new(0, 0, 0, 0)
-accentBar.BorderSizePixel = 0
-accentBar.BackgroundColor3 = Color3.fromRGB(0, 210, 255)
-accentBar.Parent = mainWindow
-
-local accentGradient = Instance.new("UIGradient")
-accentGradient.Color = ColorSequence.new({
-    ColorSequenceKeypoint.new(0, Color3.fromRGB(0, 210, 255)),
-    ColorSequenceKeypoint.new(0.6, Color3.fromRGB(130, 90, 255)),
-    ColorSequenceKeypoint.new(1, Color3.fromRGB(0, 210, 255))
-})
-accentGradient.Parent = accentBar
-
--- Title Header Bar (Draggable)
+-- ==============================================================================
+-- 1. Top Header Bar (Global Chat | Search | Controls)
+-- ==============================================================================
 local headerBar = Instance.new("Frame")
 headerBar.Name = "HeaderBar"
-headerBar.Size = UDim2.new(1, 0, 0, 48)
-headerBar.Position = UDim2.new(0, 0, 0, 3)
-headerBar.BackgroundColor3 = Color3.fromRGB(20, 23, 33)
+headerBar.Size = UDim2.new(1, 0, 0, 54)
+headerBar.Position = UDim2.new(0, 0, 0, 0)
+headerBar.BackgroundColor3 = Color3.fromRGB(15, 17, 23)
 headerBar.BorderSizePixel = 0
 headerBar.Parent = mainWindow
 
--- Logo Icon
-local logoImg = Instance.new("ImageLabel")
-logoImg.Name = "Logo"
-logoImg.Size = UDim2.new(0, 28, 0, 28)
-logoImg.Position = UDim2.new(0, 12, 0.5, -14)
-logoImg.BackgroundTransparency = 1
-logoImg.Image = GetLogoImage()
-logoImg.ScaleType = Enum.ScaleType.Fit
-logoImg.Parent = headerBar
-
-local logoCorner = Instance.new("UICorner")
-logoCorner.CornerRadius = UDim.new(0, 6)
-logoCorner.Parent = logoImg
-
 -- Title Text
 local titleLbl = Instance.new("TextLabel")
-titleLbl.Name = "Title"
-titleLbl.Size = UDim2.new(0, 160, 0, 18)
-titleLbl.Position = UDim2.new(0, 48, 0, 8)
+titleLbl.Name = "TitleLbl"
+titleLbl.Size = UDim2.new(0, 220, 0, 20)
+titleLbl.Position = UDim2.new(0, 16, 0, 10)
 titleLbl.BackgroundTransparency = 1
-titleLbl.Text = "Serenity Global Chat"
+titleLbl.Text = "Global Chat"
 titleLbl.TextColor3 = Color3.fromRGB(255, 255, 255)
 titleLbl.Font = Enum.Font.GothamBold
-titleLbl.TextSize = 13
+titleLbl.TextSize = 15
 titleLbl.TextXAlignment = Enum.TextXAlignment.Left
 titleLbl.Parent = headerBar
 
--- Subtitle / Live Indicator
-local statusIndicator = Instance.new("Frame")
-statusIndicator.Name = "StatusDot"
-statusIndicator.Size = UDim2.new(0, 6, 0, 6)
-statusIndicator.Position = UDim2.new(0, 49, 0, 31)
-statusIndicator.BackgroundColor3 = Color3.fromRGB(0, 230, 140)
-statusIndicator.BorderSizePixel = 0
-statusIndicator.Parent = headerBar
+-- Subtitle Text
+local subtitleLbl = Instance.new("TextLabel")
+subtitleLbl.Name = "SubtitleLbl"
+subtitleLbl.Size = UDim2.new(0, 260, 0, 14)
+subtitleLbl.Position = UDim2.new(0, 16, 0, 30)
+subtitleLbl.BackgroundTransparency = 1
+subtitleLbl.Text = "Talk with every Serenity user across servers"
+subtitleLbl.TextColor3 = Color3.fromRGB(120, 125, 140)
+subtitleLbl.Font = Enum.Font.Gotham
+subtitleLbl.TextSize = 11
+subtitleLbl.TextXAlignment = Enum.TextXAlignment.Left
+subtitleLbl.Parent = headerBar
 
-local dotCorner = Instance.new("UICorner")
-dotCorner.CornerRadius = UDim.new(1, 0)
-dotCorner.Parent = statusIndicator
+-- Right Controls Container (Search + - + X)
+local rightControls = Instance.new("Frame")
+rightControls.Name = "RightControls"
+rightControls.Size = UDim2.new(0, 240, 0, 36)
+rightControls.Position = UDim2.new(1, -246, 0, 10)
+rightControls.BackgroundTransparency = 1
+rightControls.Parent = headerBar
 
-local statusLbl = Instance.new("TextLabel")
-statusLbl.Name = "Status"
-statusLbl.Size = UDim2.new(0, 140, 0, 14)
-statusLbl.Position = UDim2.new(0, 60, 0, 26)
-statusLbl.BackgroundTransparency = 1
-statusLbl.Text = "Connected • Hub Wide"
-statusLbl.TextColor3 = Color3.fromRGB(150, 160, 180)
-statusLbl.Font = Enum.Font.Gotham
-statusLbl.TextSize = 10
-statusLbl.TextXAlignment = Enum.TextXAlignment.Left
-statusLbl.Parent = headerBar
+-- Search Input Bar
+local searchBoxFrame = Instance.new("Frame")
+searchBoxFrame.Name = "SearchBoxFrame"
+searchBoxFrame.Size = UDim2.new(0, 160, 0, 32)
+searchBoxFrame.Position = UDim2.new(0, 0, 0, 2)
+searchBoxFrame.BackgroundColor3 = Color3.fromRGB(24, 27, 36)
+searchBoxFrame.BorderSizePixel = 0
+searchBoxFrame.Parent = rightControls
 
--- Minimize Button ("-")
+local searchCorner = Instance.new("UICorner")
+searchCorner.CornerRadius = UDim.new(0, 6)
+searchCorner.Parent = searchBoxFrame
+
+local searchStroke = Instance.new("UIStroke")
+searchStroke.Color = Color3.fromRGB(38, 42, 54)
+searchStroke.Thickness = 0.8
+searchStroke.Parent = searchBoxFrame
+
+local searchIcon = Instance.new("TextLabel")
+searchIcon.Name = "SearchIcon"
+searchIcon.Size = UDim2.new(0, 20, 1, 0)
+searchIcon.Position = UDim2.new(0, 8, 0, 0)
+searchIcon.BackgroundTransparency = 1
+searchIcon.Text = "🔍"
+searchIcon.TextColor3 = Color3.fromRGB(130, 135, 150)
+searchIcon.Font = Enum.Font.Gotham
+searchIcon.TextSize = 11
+searchIcon.Parent = searchBoxFrame
+
+local searchInput = Instance.new("TextBox")
+searchInput.Name = "SearchInput"
+searchInput.Size = UDim2.new(1, -34, 1, 0)
+searchInput.Position = UDim2.new(0, 28, 0, 0)
+searchInput.BackgroundTransparency = 1
+searchInput.PlaceholderText = "Search"
+searchInput.PlaceholderColor3 = Color3.fromRGB(130, 135, 150)
+searchInput.Text = ""
+searchInput.TextColor3 = Color3.fromRGB(230, 235, 245)
+searchInput.Font = Enum.Font.GothamMedium
+searchInput.TextSize = 12
+searchInput.TextXAlignment = Enum.TextXAlignment.Left
+searchInput.ClearTextOnFocus = false
+searchInput.Parent = searchBoxFrame
+
+-- Window Minimize Button ("—")
 local minBtn = Instance.new("TextButton")
 minBtn.Name = "MinBtn"
-minBtn.Size = UDim2.new(0, 26, 0, 26)
-minBtn.Position = UDim2.new(1, -60, 0.5, -13)
+minBtn.Size = UDim2.new(0, 28, 0, 28)
+minBtn.Position = UDim2.new(1, -66, 0, 4)
 minBtn.BackgroundTransparency = 1
 minBtn.Text = "—"
-minBtn.TextColor3 = Color3.fromRGB(160, 165, 185)
+minBtn.TextColor3 = Color3.fromRGB(150, 155, 170)
 minBtn.Font = Enum.Font.GothamBold
 minBtn.TextSize = 13
-minBtn.Parent = headerBar
+minBtn.Parent = rightControls
 
--- Close Button ("X")
+-- Window Close Button ("X")
 local closeBtn = Instance.new("TextButton")
 closeBtn.Name = "CloseBtn"
-closeBtn.Size = UDim2.new(0, 26, 0, 26)
-closeBtn.Position = UDim2.new(1, -32, 0.5, -13)
+closeBtn.Size = UDim2.new(0, 28, 0, 28)
+closeBtn.Position = UDim2.new(1, -34, 0, 4)
 closeBtn.BackgroundTransparency = 1
 closeBtn.Text = "X"
-closeBtn.TextColor3 = Color3.fromRGB(160, 165, 185)
+closeBtn.TextColor3 = Color3.fromRGB(150, 155, 170)
 closeBtn.Font = Enum.Font.GothamBold
 closeBtn.TextSize = 12
-closeBtn.Parent = headerBar
+closeBtn.Parent = rightControls
 
--- Messages Scroll Container
-local scrollContainer = Instance.new("ScrollingFrame")
-scrollContainer.Name = "MessagesScroll"
-scrollContainer.Size = UDim2.new(1, -16, 1, -114)
-scrollContainer.Position = UDim2.new(0, 8, 0, 56)
-scrollContainer.BackgroundTransparency = 1
-scrollContainer.BorderSizePixel = 0
-scrollContainer.ScrollBarThickness = 4
-scrollContainer.ScrollBarImageColor3 = Color3.fromRGB(45, 52, 75)
-scrollContainer.CanvasSize = UDim2.new(0, 0, 0, 0)
-scrollContainer.AutomaticCanvasSize = Enum.AutomaticSize.Y
-scrollContainer.BottomImage = "rbxasset://textures/ui/Scroll/scroll-middle.png"
-scrollContainer.TopImage = "rbxasset://textures/ui/Scroll/scroll-middle.png"
-scrollContainer.Parent = mainWindow
+-- ==============================================================================
+-- 2. Sub-Header ("Live Network" | Rooms | 🟢 [count] online)
+-- ==============================================================================
+local subHeader = Instance.new("Frame")
+subHeader.Name = "SubHeader"
+subHeader.Size = UDim2.new(1, -32, 0, 26)
+subHeader.Position = UDim2.new(0, 16, 0, 58)
+subHeader.BackgroundTransparency = 1
+subHeader.Parent = mainWindow
 
-local listLayout = Instance.new("UIListLayout")
-listLayout.SortOrder = Enum.SortOrder.LayoutOrder
-listLayout.Padding = UDim.new(0, 8)
-listLayout.Parent = scrollContainer
+local liveNetLbl = Instance.new("TextLabel")
+liveNetLbl.Name = "LiveNetLbl"
+liveNetLbl.Size = UDim2.new(0, 95, 1, 0)
+liveNetLbl.Position = UDim2.new(0, 0, 0, 0)
+liveNetLbl.BackgroundTransparency = 1
+liveNetLbl.Text = "Live Network"
+liveNetLbl.TextColor3 = Color3.fromRGB(240, 242, 248)
+liveNetLbl.Font = Enum.Font.GothamBold
+liveNetLbl.TextSize = 12
+liveNetLbl.TextXAlignment = Enum.TextXAlignment.Left
+liveNetLbl.Parent = subHeader
 
-local listPadding = Instance.new("UIPadding")
-listPadding.PaddingTop = UDim.new(0, 4)
-listPadding.PaddingBottom = UDim.new(0, 6)
-listPadding.PaddingLeft = UDim.new(0, 2)
-listPadding.PaddingRight = UDim.new(0, 6)
-listPadding.Parent = scrollContainer
+-- "Rooms" Pill
+local roomsPill = Instance.new("Frame")
+roomsPill.Name = "RoomsPill"
+roomsPill.Size = UDim2.new(0, 68, 0, 24)
+roomsPill.Position = UDim2.new(0, 108, 0, 1)
+roomsPill.BackgroundColor3 = Color3.fromRGB(24, 27, 36)
+roomsPill.BorderSizePixel = 0
+roomsPill.Parent = subHeader
 
--- Input Bar Container
-local inputContainer = Instance.new("Frame")
-inputContainer.Name = "InputContainer"
-inputContainer.Size = UDim2.new(1, -16, 0, 46)
-inputContainer.Position = UDim2.new(0, 8, 1, -52)
-inputContainer.BackgroundColor3 = Color3.fromRGB(22, 25, 36)
-inputContainer.BorderSizePixel = 0
-inputContainer.Parent = mainWindow
+local rCorner = Instance.new("UICorner")
+rCorner.CornerRadius = UDim.new(0, 6)
+rCorner.Parent = roomsPill
 
-local inputCorner = Instance.new("UICorner")
-inputCorner.CornerRadius = UDim.new(0, 8)
-inputCorner.Parent = inputContainer
+local rStroke = Instance.new("UIStroke")
+rStroke.Color = Color3.fromRGB(40, 44, 58)
+rStroke.Thickness = 0.8
+rStroke.Parent = roomsPill
 
-local inputStroke = Instance.new("UIStroke")
-inputStroke.Color = Color3.fromRGB(38, 44, 62)
-inputStroke.Thickness = 1
-inputStroke.Parent = inputContainer
+local rText = Instance.new("TextLabel")
+rText.Name = "Label"
+rText.Size = UDim2.new(1, 0, 1, 0)
+rText.BackgroundTransparency = 1
+rText.Text = "Rooms"
+rText.TextColor3 = Color3.fromRGB(220, 225, 235)
+rText.Font = Enum.Font.GothamMedium
+rText.TextSize = 11
+rText.Parent = roomsPill
+
+-- "🔴 Hidden" Pill
+local hiddenPill = Instance.new("TextButton")
+hiddenPill.Name = "HiddenPill"
+hiddenPill.Size = UDim2.new(0, 74, 0, 24)
+hiddenPill.Position = UDim2.new(0, 184, 0, 1)
+hiddenPill.BackgroundColor3 = Color3.fromRGB(20, 23, 31)
+hiddenPill.BorderSizePixel = 0
+hiddenPill.Text = "• Hidden"
+hiddenPill.TextColor3 = Color3.fromRGB(150, 155, 170)
+hiddenPill.Font = Enum.Font.GothamMedium
+hiddenPill.TextSize = 11
+hiddenPill.Parent = subHeader
+
+local hCorner = Instance.new("UICorner")
+hCorner.CornerRadius = UDim.new(0, 6)
+hCorner.Parent = hiddenPill
+
+local hStroke = Instance.new("UIStroke")
+hStroke.Color = Color3.fromRGB(36, 40, 52)
+hStroke.Thickness = 0.8
+hStroke.Parent = hiddenPill
+
+local hDot = Instance.new("Frame")
+hDot.Name = "Dot"
+hDot.Size = UDim2.new(0, 6, 0, 6)
+hDot.Position = UDim2.new(0, 9, 0.5, -3)
+hDot.BackgroundColor3 = Color3.fromRGB(235, 75, 75)
+hDot.BorderSizePixel = 0
+hDot.Parent = hiddenPill
+
+local hdCorner = Instance.new("UICorner")
+hdCorner.CornerRadius = UDim.new(1, 0)
+hdCorner.Parent = hDot
+
+-- Right: "🟢 8052 online"
+local onlineStatusFrame = Instance.new("Frame")
+onlineStatusFrame.Name = "OnlineStatusFrame"
+onlineStatusFrame.Size = UDim2.new(0, 110, 1, 0)
+onlineStatusFrame.Position = UDim2.new(1, -110, 0, 0)
+onlineStatusFrame.BackgroundTransparency = 1
+onlineStatusFrame.Parent = subHeader
+
+local onlineDot = Instance.new("Frame")
+onlineDot.Name = "OnlineDot"
+onlineDot.Size = UDim2.new(0, 6, 0, 6)
+onlineDot.Position = UDim2.new(1, -86, 0.5, -3)
+onlineDot.BackgroundColor3 = Color3.fromRGB(46, 204, 113)
+onlineDot.BorderSizePixel = 0
+onlineDot.Parent = onlineStatusFrame
+
+local odCorner = Instance.new("UICorner")
+odCorner.CornerRadius = UDim.new(1, 0)
+odCorner.Parent = onlineDot
+
+local onlineLbl = Instance.new("TextLabel")
+onlineLbl.Name = "OnlineLbl"
+onlineLbl.Size = UDim2.new(1, -16, 1, 0)
+onlineLbl.Position = UDim2.new(0, 14, 0, 0)
+onlineLbl.BackgroundTransparency = 1
+onlineLbl.Text = "8052 online"
+onlineLbl.TextColor3 = Color3.fromRGB(160, 168, 185)
+onlineLbl.Font = Enum.Font.GothamMedium
+onlineLbl.TextSize = 11
+onlineLbl.TextXAlignment = Enum.TextXAlignment.Right
+onlineLbl.Parent = onlineStatusFrame
+
+-- ==============================================================================
+-- 3. Room Buttons Navigation Row (< [General] [Indonesian] ... >)
+-- ==============================================================================
+local roomsContainer = Instance.new("Frame")
+roomsContainer.Name = "RoomsContainer"
+roomsContainer.Size = UDim2.new(1, -32, 0, 36)
+roomsContainer.Position = UDim2.new(0, 16, 0, 90)
+roomsContainer.BackgroundTransparency = 1
+roomsContainer.Parent = mainWindow
+
+-- Left arrow button
+local leftArrowBtn = Instance.new("TextButton")
+leftArrowBtn.Name = "LeftArrow"
+leftArrowBtn.Size = UDim2.new(0, 24, 0, 30)
+leftArrowBtn.Position = UDim2.new(0, 0, 0, 3)
+leftArrowBtn.BackgroundColor3 = Color3.fromRGB(22, 25, 34)
+leftArrowBtn.BorderSizePixel = 0
+leftArrowBtn.Text = "‹"
+leftArrowBtn.TextColor3 = Color3.fromRGB(160, 165, 180)
+leftArrowBtn.Font = Enum.Font.GothamBold
+leftArrowBtn.TextSize = 14
+leftArrowBtn.Parent = roomsContainer
+
+local laCorner = Instance.new("UICorner")
+laCorner.CornerRadius = UDim.new(0, 6)
+laCorner.Parent = leftArrowBtn
+
+-- Right arrow button
+local rightArrowBtn = Instance.new("TextButton")
+rightArrowBtn.Name = "RightArrow"
+rightArrowBtn.Size = UDim2.new(0, 24, 0, 30)
+rightArrowBtn.Position = UDim2.new(1, -24, 0, 3)
+rightArrowBtn.BackgroundColor3 = Color3.fromRGB(22, 25, 34)
+rightArrowBtn.BorderSizePixel = 0
+rightArrowBtn.Text = "›"
+rightArrowBtn.TextColor3 = Color3.fromRGB(160, 165, 180)
+rightArrowBtn.Font = Enum.Font.GothamBold
+rightArrowBtn.TextSize = 14
+rightArrowBtn.Parent = roomsContainer
+
+local raCorner = Instance.new("UICorner")
+raCorner.CornerRadius = UDim.new(0, 6)
+raCorner.Parent = rightArrowBtn
+
+-- Scrollable room pills frame
+local roomScroll = Instance.new("ScrollingFrame")
+roomScroll.Name = "RoomScroll"
+roomScroll.Size = UDim2.new(1, -60, 1, 0)
+roomScroll.Position = UDim2.new(0, 30, 0, 0)
+roomScroll.BackgroundTransparency = 1
+roomScroll.BorderSizePixel = 0
+roomScroll.ScrollBarThickness = 0
+roomScroll.CanvasSize = UDim2.new(0, 480, 0, 0)
+roomScroll.AutomaticCanvasSize = Enum.AutomaticSize.X
+roomScroll.ScrollingDirection = Enum.ScrollingDirection.X
+roomScroll.Parent = roomsContainer
+
+local roomListLayout = Instance.new("UIListLayout")
+roomListLayout.FillDirection = Enum.FillDirection.Horizontal
+roomListLayout.HorizontalAlignment = Enum.HorizontalAlignment.Left
+roomListLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+roomListLayout.Padding = UDim.new(0, 8)
+roomListLayout.Parent = roomScroll
+
+-- Arrow scroll handlers
+leftArrowBtn.MouseButton1Click:Connect(function()
+    roomScroll.CanvasPosition = Vector2.new(math.max(0, roomScroll.CanvasPosition.X - 100), 0)
+end)
+rightArrowBtn.MouseButton1Click:Connect(function()
+    roomScroll.CanvasPosition = Vector2.new(roomScroll.CanvasPosition.X + 100, 0)
+end)
+
+local roomButtons = {}
+
+local function UpdateRoomStyles()
+    for _, item in ipairs(roomButtons) do
+        local isSelected = item.id == currentRoom
+        if isSelected then
+            item.btn.BackgroundColor3 = Color3.fromRGB(38, 42, 54)
+            item.label.TextColor3 = Color3.fromRGB(255, 255, 255)
+            item.stroke.Color = Color3.fromRGB(56, 62, 80)
+        else
+            item.btn.BackgroundColor3 = Color3.fromRGB(22, 25, 34)
+            item.label.TextColor3 = Color3.fromRGB(160, 165, 180)
+            item.stroke.Color = Color3.fromRGB(32, 36, 48)
+        end
+    end
+end
+
+-- ==============================================================================
+-- 4. Messages Feed ScrollingFrame
+-- ==============================================================================
+local messagesScroll = Instance.new("ScrollingFrame")
+messagesScroll.Name = "MessagesScroll"
+messagesScroll.Size = UDim2.new(1, -32, 1, -196)
+messagesScroll.Position = UDim2.new(0, 16, 0, 134)
+messagesScroll.BackgroundColor3 = Color3.fromRGB(15, 17, 23)
+messagesScroll.BorderSizePixel = 0
+messagesScroll.ScrollBarThickness = 4
+messagesScroll.ScrollBarImageColor3 = Color3.fromRGB(35, 40, 54)
+messagesScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+messagesScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+messagesScroll.BottomImage = "rbxasset://textures/ui/Scroll/scroll-middle.png"
+messagesScroll.TopImage = "rbxasset://textures/ui/Scroll/scroll-middle.png"
+messagesScroll.Parent = mainWindow
+
+local msgListLayout = Instance.new("UIListLayout")
+msgListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+msgListLayout.Padding = UDim.new(0, 14)
+msgListLayout.Parent = messagesScroll
+
+local msgPadding = Instance.new("UIPadding")
+msgPadding.PaddingTop = UDim.new(0, 6)
+msgPadding.PaddingBottom = UDim.new(0, 10)
+msgPadding.PaddingLeft = UDim.new(0, 4)
+msgPadding.PaddingRight = UDim.new(0, 6)
+msgPadding.Parent = messagesScroll
+
+-- ==============================================================================
+-- 5. Bottom Input Bar Row (TextBox | @ Button | Send Button)
+-- ==============================================================================
+local bottomContainer = Instance.new("Frame")
+bottomContainer.Name = "BottomContainer"
+bottomContainer.Size = UDim2.new(1, -32, 0, 44)
+bottomContainer.Position = UDim2.new(0, 16, 1, -54)
+bottomContainer.BackgroundTransparency = 1
+bottomContainer.Parent = mainWindow
 
 -- Text Input Box
 local chatInput = Instance.new("TextBox")
 chatInput.Name = "ChatInput"
-chatInput.Size = UDim2.new(1, -54, 1, 0)
-chatInput.Position = UDim2.new(0, 10, 0, 0)
-chatInput.BackgroundTransparency = 1
-chatInput.PlaceholderText = "Type message... (Enter to send)"
-chatInput.PlaceholderColor3 = Color3.fromRGB(110, 115, 135)
+chatInput.Size = UDim2.new(1, -125, 0, 38)
+chatInput.Position = UDim2.new(0, 0, 0, 3)
+chatInput.BackgroundColor3 = Color3.fromRGB(22, 25, 34)
+chatInput.BorderSizePixel = 0
+chatInput.PlaceholderText = "Type a message..."
+chatInput.PlaceholderColor3 = Color3.fromRGB(100, 108, 125)
 chatInput.Text = ""
 chatInput.TextColor3 = Color3.fromRGB(240, 245, 255)
 chatInput.Font = Enum.Font.GothamMedium
 chatInput.TextSize = 12
 chatInput.TextXAlignment = Enum.TextXAlignment.Left
 chatInput.ClearTextOnFocus = false
-chatInput.Parent = inputContainer
+chatInput.Parent = bottomContainer
 
--- Send Button
+local inputCorner = Instance.new("UICorner")
+inputCorner.CornerRadius = UDim.new(0, 8)
+inputCorner.Parent = chatInput
+
+local inputStroke = Instance.new("UIStroke")
+inputStroke.Color = Color3.fromRGB(36, 40, 54)
+inputStroke.Thickness = 0.8
+inputStroke.Parent = chatInput
+
+local inputPadding = Instance.new("UIPadding")
+inputPadding.PaddingLeft = UDim.new(0, 14)
+inputPadding.PaddingRight = UDim.new(0, 10)
+inputPadding.Parent = chatInput
+
+-- Mention "@" Button
+local mentionBtn = Instance.new("TextButton")
+mentionBtn.Name = "MentionBtn"
+mentionBtn.Size = UDim2.new(0, 36, 0, 38)
+mentionBtn.Position = UDim2.new(1, -115, 0, 3)
+mentionBtn.BackgroundColor3 = Color3.fromRGB(22, 25, 34)
+mentionBtn.BorderSizePixel = 0
+mentionBtn.Text = "@"
+mentionBtn.TextColor3 = Color3.fromRGB(170, 175, 190)
+mentionBtn.Font = Enum.Font.GothamBold
+mentionBtn.TextSize = 14
+mentionBtn.Parent = bottomContainer
+
+local mCorner = Instance.new("UICorner")
+mCorner.CornerRadius = UDim.new(0, 8)
+mCorner.Parent = mentionBtn
+
+local mStroke = Instance.new("UIStroke")
+mStroke.Color = Color3.fromRGB(36, 40, 54)
+mStroke.Thickness = 0.8
+mStroke.Parent = mentionBtn
+
+mentionBtn.MouseButton1Click:Connect(function()
+    chatInput.Text = chatInput.Text .. "@"
+    chatInput:CaptureFocus()
+end)
+
+-- Send Button (Pure White Pill with Dark Text)
 local sendBtn = Instance.new("TextButton")
 sendBtn.Name = "SendBtn"
-sendBtn.Size = UDim2.new(0, 36, 0, 34)
-sendBtn.Position = UDim2.new(1, -40, 0.5, -17)
-sendBtn.BackgroundColor3 = Color3.fromRGB(0, 210, 255)
+sendBtn.Size = UDim2.new(0, 68, 0, 38)
+sendBtn.Position = UDim2.new(1, -70, 0, 3)
+sendBtn.BackgroundColor3 = Color3.fromRGB(246, 248, 252)
 sendBtn.BorderSizePixel = 0
-sendBtn.Text = "➤"
-sendBtn.TextColor3 = Color3.fromRGB(10, 12, 18)
+sendBtn.Text = "Send"
+sendBtn.TextColor3 = Color3.fromRGB(15, 17, 24)
 sendBtn.Font = Enum.Font.GothamBold
-sendBtn.TextSize = 14
-sendBtn.Parent = inputContainer
+sendBtn.TextSize = 12
+sendBtn.Parent = bottomContainer
 
-local sendBtnCorner = Instance.new("UICorner")
-sendBtnCorner.CornerRadius = UDim.new(0, 6)
-sendBtnCorner.Parent = sendBtn
+local sendCorner = Instance.new("UICorner")
+sendCorner.CornerRadius = UDim.new(0, 8)
+sendCorner.Parent = sendBtn
 
--- Cooldown / Char Count Pill
-local cooldownLbl = Instance.new("TextLabel")
-cooldownLbl.Name = "CooldownLbl"
-cooldownLbl.Size = UDim2.new(0, 100, 0, 12)
-cooldownLbl.Position = UDim2.new(1, -118, 0, -14)
-cooldownLbl.BackgroundTransparency = 1
-cooldownLbl.Text = "0/200"
-cooldownLbl.TextColor3 = Color3.fromRGB(110, 115, 135)
-cooldownLbl.Font = Enum.Font.Gotham
-cooldownLbl.TextSize = 10
-cooldownLbl.TextXAlignment = Enum.TextXAlignment.Right
-cooldownLbl.Parent = inputContainer
-
--- Floating Mini-Pill (When minimized or toggled closed)
+-- ==============================================================================
+-- Floating Mini-Pill (When minimized or closed)
+-- ==============================================================================
 local floatingPill = Instance.new("TextButton")
 floatingPill.Name = "FloatingChatPill"
 floatingPill.Size = UDim2.new(0, 140, 0, 36)
@@ -405,16 +648,15 @@ floatingPill.TextSize = 12
 floatingPill.Visible = false
 floatingPill.Parent = screenGui
 
-local pillCorner = Instance.new("UICorner")
-pillCorner.CornerRadius = UDim.new(0, 18)
-pillCorner.Parent = floatingPill
+local fpCorner = Instance.new("UICorner")
+fpCorner.CornerRadius = UDim.new(0, 18)
+fpCorner.Parent = floatingPill
 
-local pillStroke = Instance.new("UIStroke")
-pillStroke.Color = Color3.fromRGB(0, 210, 255)
-pillStroke.Thickness = 1.2
-pillStroke.Parent = floatingPill
+local fpStroke = Instance.new("UIStroke")
+fpStroke.Color = Color3.fromRGB(0, 210, 255)
+fpStroke.Thickness = 1.2
+fpStroke.Parent = floatingPill
 
--- Unread Badge on Pill
 local unreadBadge = Instance.new("TextLabel")
 unreadBadge.Name = "UnreadBadge"
 unreadBadge.Size = UDim2.new(0, 18, 0, 18)
@@ -428,9 +670,89 @@ unreadBadge.TextSize = 10
 unreadBadge.Visible = false
 unreadBadge.Parent = floatingPill
 
-local badgeCorner = Instance.new("UICorner")
-badgeCorner.CornerRadius = UDim.new(1, 0)
-badgeCorner.Parent = unreadBadge
+local ubCorner = Instance.new("UICorner")
+ubCorner.CornerRadius = UDim.new(1, 0)
+ubCorner.Parent = unreadBadge
+
+-- ==============================================================================
+-- Populate Room Pills
+-- ==============================================================================
+local function RenderRoomPills()
+    for _, child in ipairs(roomScroll:GetChildren()) do
+        if child:IsA("TextButton") then child:Destroy() end
+    end
+    roomButtons = {}
+
+    for _, rData in ipairs(RoomsList) do
+        local rBtn = Instance.new("TextButton")
+        rBtn.Name = "Room_" .. rData.id
+        rBtn.Size = UDim2.new(0, 0, 0, 30)
+        rBtn.AutomaticSize = Enum.AutomaticSize.X
+        rBtn.BackgroundColor3 = Color3.fromRGB(22, 25, 34)
+        rBtn.BorderSizePixel = 0
+        rBtn.Text = ""
+        rBtn.AutoButtonColor = false
+        rBtn.Parent = roomScroll
+
+        local rbCorner = Instance.new("UICorner")
+        rbCorner.CornerRadius = UDim.new(0, 6)
+        rbCorner.Parent = rBtn
+
+        local rbStroke = Instance.new("UIStroke")
+        rbStroke.Color = Color3.fromRGB(32, 36, 48)
+        rbStroke.Thickness = 0.8
+        rbStroke.Parent = rBtn
+
+        local rbPad = Instance.new("UIPadding")
+        rbPad.PaddingLeft = UDim.new(0, 14)
+        rbPad.PaddingRight = UDim.new(0, rData.hasDot and 20 or 14)
+        rbPad.Parent = rBtn
+
+        local rbLbl = Instance.new("TextLabel")
+        rbLbl.Name = "Text"
+        rbLbl.Size = UDim2.new(0, 0, 1, 0)
+        rbLbl.AutomaticSize = Enum.AutomaticSize.X
+        rbLbl.BackgroundTransparency = 1
+        rbLbl.Text = rData.name
+        rbLbl.TextColor3 = Color3.fromRGB(160, 165, 180)
+        rbLbl.Font = Enum.Font.GothamMedium
+        rbLbl.TextSize = 11
+        rbLbl.Parent = rBtn
+
+        if rData.hasDot then
+            local rDot = Instance.new("Frame")
+            rDot.Name = "Dot"
+            rDot.Size = UDim2.new(0, 6, 0, 6)
+            rDot.Position = UDim2.new(1, 8, 0.5, -3)
+            rDot.BackgroundColor3 = Color3.fromRGB(235, 75, 75)
+            rDot.BorderSizePixel = 0
+            rDot.Parent = rbLbl
+
+            local rdCorner = Instance.new("UICorner")
+            rdCorner.CornerRadius = UDim.new(1, 0)
+            rdCorner.Parent = rDot
+        end
+
+        rBtn.MouseButton1Click:Connect(function()
+            if currentRoom ~= rData.id then
+                currentRoom = rData.id
+                UpdateRoomStyles()
+                FilterAndRenderMessages()
+            end
+        end)
+
+        table.insert(roomButtons, {
+            id = rData.id,
+            btn = rBtn,
+            label = rbLbl,
+            stroke = rbStroke
+        })
+    end
+
+    UpdateRoomStyles()
+end
+
+RenderRoomPills()
 
 -- ==============================================================================
 -- Draggable Window Helper
@@ -478,125 +800,139 @@ MakeDraggable(headerBar, mainWindow)
 MakeDraggable(floatingPill, floatingPill)
 
 -- ==============================================================================
--- Message Bubble Renderer
+-- Format Mentions (@username) in Vibrant Cyan/Blue
 -- ==============================================================================
-local function AddMessageBubble(msgData)
-    local bubble = Instance.new("Frame")
-    bubble.Name = "Msg_" .. tostring(msgData.id)
-    bubble.Size = UDim2.new(1, 0, 0, 0) -- Automatic sizing
-    bubble.AutomaticSize = Enum.AutomaticSize.Y
-    bubble.BackgroundColor3 = Color3.fromRGB(20, 23, 33)
-    bubble.BorderSizePixel = 0
-    bubble.LayoutOrder = msgData.id or 0
-    bubble.Parent = scrollContainer
+local function FormatMentions(rawText)
+    if not rawText then return "" end
+    -- Escape XML special characters first
+    local safe = rawText:gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;")
+    -- Format @mentions
+    safe = safe:gsub("(@[%w_]+)", "<font color=\"rgb(75,160,255)\">%1</font>")
+    return safe
+end
 
-    local bCorner = Instance.new("UICorner")
-    bCorner.CornerRadius = UDim.new(0, 8)
-    bCorner.Parent = bubble
+-- ==============================================================================
+-- Render Individual Message Item (Exact Sena Style)
+-- ==============================================================================
+local function CreateMessageRow(msg)
+    local row = Instance.new("Frame")
+    row.Name = "MsgRow_" .. tostring(msg.id)
+    row.Size = UDim2.new(1, 0, 0, 0)
+    row.AutomaticSize = Enum.AutomaticSize.Y
+    row.BackgroundTransparency = 1
+    row.BorderSizePixel = 0
+    row.LayoutOrder = msg.id or 0
+    row.Parent = messagesScroll
 
-    local bStroke = Instance.new("UIStroke")
-    bStroke.Color = Color3.fromRGB(30, 35, 48)
-    bStroke.Thickness = 0.8
-    bStroke.Parent = bubble
-
-    local isMe = tostring(msgData.userId) == tostring(localPlayer.UserId)
-    local isSystem = msgData.system == true
-
-    if isMe then
-        bStroke.Color = Color3.fromRGB(0, 180, 230)
-    elseif isSystem then
-        bStroke.Color = Color3.fromRGB(255, 190, 40)
-    end
-
-    -- Avatar Headshot
+    -- 1. Circular Avatar
     local avatar = Instance.new("ImageLabel")
     avatar.Name = "Avatar"
-    avatar.Size = UDim2.new(0, 32, 0, 32)
-    avatar.Position = UDim2.new(0, 8, 0, 8)
-    avatar.BackgroundColor3 = Color3.fromRGB(15, 17, 24)
+    avatar.Size = UDim2.new(0, 36, 0, 36)
+    avatar.Position = UDim2.new(0, 0, 0, 2)
+    avatar.BackgroundColor3 = Color3.fromRGB(24, 27, 36)
     avatar.BorderSizePixel = 0
     
-    if isSystem then
-        avatar.Image = GetLogoImage()
-    else
-        local uid = tonumber(msgData.userId) or 1
-        avatar.Image = string.format("rbxthumb://type=AvatarHeadShot&id=%d&w=48&h=48", uid)
-    end
+    local uid = tonumber(msg.userId) or 1
+    avatar.Image = string.format("rbxthumb://type=AvatarHeadShot&id=%d&w=48&h=48", uid)
     avatar.ScaleType = Enum.ScaleType.Fit
-    avatar.Parent = bubble
+    avatar.Parent = row
 
     local avCorner = Instance.new("UICorner")
-    avCorner.CornerRadius = UDim.new(0, 6)
+    avCorner.CornerRadius = UDim.new(1, 0) -- Pure circle
     avCorner.Parent = avatar
 
-    -- Author info row
-    local authorLbl = Instance.new("TextLabel")
-    authorLbl.Name = "Author"
-    authorLbl.Size = UDim2.new(1, -50, 0, 16)
-    authorLbl.Position = UDim2.new(0, 46, 0, 6)
-    authorLbl.BackgroundTransparency = 1
+    -- 2. Header Line (Username | Game Name · Time)
+    local headerLine = Instance.new("TextLabel")
+    headerLine.Name = "HeaderLine"
+    headerLine.Size = UDim2.new(1, -50, 0, 16)
+    headerLine.Position = UDim2.new(0, 48, 0, 0)
+    headerLine.BackgroundTransparency = 1
     
-    local dName = msgData.displayName or msgData.username or "Anonymous"
-    local uName = msgData.username or ""
-    local timeStr = msgData.time or ""
+    local uName = tostring(msg.username or "Anonymous")
+    -- Subtle censor if desired or show real username
+    local gameTag = tostring(msg.gameName or "Steal An Egg")
+    local timeStr = tostring(msg.time or "11:01")
 
-    if isSystem then
-        authorLbl.Text = string.format("<b><font color=\"rgb(255,200,50)\">%s</font></b> • <font color=\"rgb(130,135,150)\">%s</font>", dName, timeStr)
-    elseif isMe then
-        authorLbl.Text = string.format("<b><font color=\"rgb(0,215,255)\">%s</font></b> <font color=\"rgb(120,125,145)\">(@%s)</font> • <font color=\"rgb(110,115,130)\">%s</font>", dName, uName, timeStr)
-    else
-        authorLbl.Text = string.format("<b><font color=\"rgb(255,255,255)\">%s</font></b> <font color=\"rgb(130,135,150)\">(@%s)</font> • <font color=\"rgb(110,115,130)\">%s</font>", dName, uName, timeStr)
-    end
+    -- Assign aesthetic pastel colors to different users
+    local nameColors = {
+        Color3.fromRGB(115, 235, 175), -- mint green
+        Color3.fromRGB(255, 155, 195), -- soft pink
+        Color3.fromRGB(145, 215, 255), -- light cyan
+        Color3.fromRGB(255, 215, 125), -- soft amber
+        Color3.fromRGB(195, 165, 255)  -- soft violet
+    }
+    local colorIdx = ((tonumber(msg.userId) or #uName) % #nameColors) + 1
+    local nameColor = nameColors[colorIdx]
 
-    authorLbl.RichText = true
-    authorLbl.Font = Enum.Font.GothamMedium
-    authorLbl.TextSize = 11
-    authorLbl.TextXAlignment = Enum.TextXAlignment.Left
-    authorLbl.Parent = bubble
+    headerLine.RichText = true
+    headerLine.Text = string.format(
+        "<font color=\"rgb(%d,%d,%d)\"><b>%s</b></font>  <font color=\"rgb(130,138,155)\">%s  ·  %s</font>",
+        nameColor.R * 255, nameColor.G * 255, nameColor.B * 255,
+        uName,
+        gameTag,
+        timeStr
+    )
+    headerLine.Font = Enum.Font.GothamMedium
+    headerLine.TextSize = 12
+    headerLine.TextXAlignment = Enum.TextXAlignment.Left
+    headerLine.Parent = row
 
-    -- Message Body Text (Auto-wrapping)
-    local bodyLbl = Instance.new("TextLabel")
-    bodyLbl.Name = "Body"
-    bodyLbl.Size = UDim2.new(1, -54, 0, 0)
-    bodyLbl.Position = UDim2.new(0, 46, 0, 24)
-    bodyLbl.AutomaticSize = Enum.AutomaticSize.Y
-    bodyLbl.BackgroundTransparency = 1
-    bodyLbl.Text = tostring(msgData.message or "")
-    bodyLbl.TextColor3 = isSystem and Color3.fromRGB(240, 235, 200) or Color3.fromRGB(220, 225, 235)
-    bodyLbl.Font = Enum.Font.Gotham
-    bodyLbl.TextSize = 12
-    bodyLbl.TextWrapped = true
-    bodyLbl.TextXAlignment = Enum.TextXAlignment.Left
-    bodyLbl.TextYAlignment = Enum.TextYAlignment.Top
-    bodyLbl.Parent = bubble
+    -- 3. Message Body
+    local msgBody = Instance.new("TextLabel")
+    msgBody.Name = "MsgBody"
+    msgBody.Size = UDim2.new(1, -50, 0, 0)
+    msgBody.Position = UDim2.new(0, 48, 0, 18)
+    msgBody.AutomaticSize = Enum.AutomaticSize.Y
+    msgBody.BackgroundTransparency = 1
+    msgBody.RichText = true
+    msgBody.Text = FormatMentions(tostring(msg.message or ""))
+    msgBody.TextColor3 = Color3.fromRGB(225, 230, 240)
+    msgBody.Font = Enum.Font.GothamMedium
+    msgBody.TextSize = 12
+    msgBody.TextWrapped = true
+    msgBody.TextXAlignment = Enum.TextXAlignment.Left
+    msgBody.TextYAlignment = Enum.TextYAlignment.Top
+    msgBody.Parent = row
 
-    -- Extra bottom padding
     local pad = Instance.new("UIPadding")
-    pad.PaddingBottom = UDim.new(0, 8)
-    pad.Parent = bubble
+    pad.PaddingBottom = UDim.new(0, 4)
+    pad.Parent = row
+end
 
-    -- Trim old messages if container exceeds limit
-    local children = scrollContainer:GetChildren()
-    local messageCount = 0
-    for _, child in ipairs(children) do
-        if child:IsA("Frame") and child.Name:sub(1, 4) == "Msg_" then
-            messageCount = messageCount + 1
-        end
-    end
-    if messageCount > ChatConfig.MaxDisplayMessages then
-        for _, child in ipairs(children) do
-            if child:IsA("Frame") and child.Name:sub(1, 4) == "Msg_" then
-                child:Destroy()
-                break
-            end
+-- ==============================================================================
+-- Filter & Render Message Feed
+-- ==============================================================================
+function FilterAndRenderMessages()
+    for _, child in ipairs(messagesScroll:GetChildren()) do
+        if child:IsA("Frame") and child.Name:sub(1, 7) == "MsgRow_" then
+            child:Destroy()
         end
     end
 
-    -- Auto scroll to bottom
+    local qLower = searchQuery:lower()
+
+    for _, msg in ipairs(allLoadedMessages) do
+        local roomMatch = (currentRoom == "all") or (not msg.room or msg.room:lower() == currentRoom:lower())
+        local searchMatch = (qLower == "") 
+            or (msg.message and msg.message:lower():find(qLower, 1, true))
+            or (msg.username and msg.username:lower():find(qLower, 1, true))
+            or (msg.gameName and msg.gameName:lower():find(qLower, 1, true))
+
+        if roomMatch and searchMatch then
+            CreateMessageRow(msg)
+        end
+    end
+
     task.defer(function()
-        scrollContainer.CanvasPosition = Vector2.new(0, scrollContainer.AbsoluteCanvasSize.Y)
+        messagesScroll.CanvasPosition = Vector2.new(0, messagesScroll.AbsoluteCanvasSize.Y)
     end)
 end
+
+-- Search input listener
+searchInput:GetPropertyChangedSignal("Text"):Connect(function()
+    searchQuery = searchInput.Text
+    FilterAndRenderMessages()
+end)
 
 -- ==============================================================================
 -- Polling & Message Synchronization
@@ -615,34 +951,49 @@ local function FetchNewMessages()
             local msgId = tonumber(msg.id) or 0
             if msgId > lastMessageId then
                 lastMessageId = msgId
-                AddMessageBubble(msg)
+                table.insert(allLoadedMessages, msg)
                 hasNew = true
             end
         end
 
         if hasNew then
+            FilterAndRenderMessages()
+
             if not isWindowVisible or isMinimized then
                 unreadCount = unreadCount + 1
                 unreadBadge.Text = tostring(unreadCount)
                 unreadBadge.Visible = true
             end
 
-            if ChatConfig.SoundEnabled and hasNew then
-                pcall(function()
-                    local snd = Instance.new("Sound")
-                    snd.SoundId = "rbxassetid://9069609268" -- soft chat pop
-                    snd.Volume = 0.4
-                    snd.Parent = SoundService
-                    snd:Play()
-                    game:GetService("Debris"):AddItem(snd, 2)
-                end)
+            pcall(function()
+                local snd = Instance.new("Sound")
+                snd.SoundId = "rbxassetid://9069609268" -- clean pop
+                snd.Volume = 0.35
+                snd.Parent = SoundService
+                snd:Play()
+                game:GetService("Debris"):AddItem(snd, 2)
+            end)
+        end
+    end
+end
+
+-- Fetch live online user count
+local function FetchOnlineCounter()
+    for _, statsUrl in ipairs(ChatConfig.StatsUrls) do
+        local raw = FetchRaw(statsUrl .. "?_t=" .. os.time())
+        if raw then
+            local ok, data = pcall(function() return HttpService:JSONDecode(raw) end)
+            if ok and data and data.activeNow ~= nil then
+                local num = tonumber(data.activeNow) or 0
+                onlineLbl.Text = string.format("%d online", num)
+                return
             end
         end
     end
 end
 
 -- ==============================================================================
--- Send Message Action
+-- Send Chat Message
 -- ==============================================================================
 local function SendChatMessage()
     local text = chatInput.Text
@@ -650,19 +1001,11 @@ local function SendChatMessage()
 
     local now = tick()
     if now - lastSendTime < ChatConfig.CooldownSeconds then
-        local waitLeft = string.format("%.1f", ChatConfig.CooldownSeconds - (now - lastSendTime))
-        cooldownLbl.Text = "Wait " .. waitLeft .. "s"
-        cooldownLbl.TextColor3 = Color3.fromRGB(255, 100, 100)
-        task.delay(1, function()
-            cooldownLbl.Text = string.format("%d/200", #chatInput.Text)
-            cooldownLbl.TextColor3 = Color3.fromRGB(110, 115, 135)
-        end)
         return
     end
 
     lastSendTime = now
     chatInput.Text = ""
-    cooldownLbl.Text = "0/200"
 
     local base = GetWorkingApiUrl()
     local postUrl = string.format("%s/messages", base)
@@ -671,6 +1014,8 @@ local function SendChatMessage()
         userId = tostring(localPlayer.UserId),
         username = tostring(localPlayer.Name),
         displayName = tostring(localPlayer.DisplayName),
+        gameName = currentGameName,
+        room = currentRoom,
         message = text:sub(1, 200)
     }
 
@@ -678,21 +1023,10 @@ local function SendChatMessage()
         local body, status = PostRaw(postUrl, HttpService:JSONEncode(payload))
         if status == 201 or status == 200 then
             FetchNewMessages()
-        else
-            -- If rate limited or failed, log feedback
-            pcall(function()
-                local errData = HttpService:JSONDecode(body)
-                if errData and errData.error then
-                    cooldownLbl.Text = errData.error:sub(1, 20)
-                end
-            end)
         end
     end)
 end
 
--- ==============================================================================
--- Interactive Event Handlers
--- ==============================================================================
 sendBtn.MouseButton1Click:Connect(SendChatMessage)
 
 chatInput.FocusLost:Connect(function(enterPressed)
@@ -701,24 +1035,12 @@ chatInput.FocusLost:Connect(function(enterPressed)
     end
 end)
 
-chatInput:GetPropertyChangedSignal("Text"):Connect(function()
-    local len = #chatInput.Text
-    if len > 200 then
-        chatInput.Text = chatInput.Text:sub(1, 200)
-        len = 200
-    end
-    cooldownLbl.Text = string.format("%d/200", len)
-end)
-
--- Minimize action
+-- Minimize & Close Handlers
 local function ToggleMinimize()
     isMinimized = not isMinimized
-    if isMinimized then
-        mainWindow.Visible = false
-        floatingPill.Visible = true
-    else
-        mainWindow.Visible = true
-        floatingPill.Visible = false
+    mainWindow.Visible = not isMinimized
+    floatingPill.Visible = isMinimized
+    if not isMinimized then
         unreadCount = 0
         unreadBadge.Visible = false
     end
@@ -727,7 +1049,6 @@ end
 minBtn.MouseButton1Click:Connect(ToggleMinimize)
 floatingPill.MouseButton1Click:Connect(ToggleMinimize)
 
--- Close action
 local function ToggleClose()
     isWindowVisible = not isWindowVisible
     mainWindow.Visible = isWindowVisible
@@ -740,7 +1061,6 @@ end
 
 closeBtn.MouseButton1Click:Connect(ToggleClose)
 
--- Toggle hotkey (RightShift)
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
     if not gameProcessed and input.KeyCode == ChatConfig.ToggleKey then
         ToggleClose()
@@ -757,14 +1077,14 @@ local function AddHoverEffect(btn, normalColor, hoverColor)
     end)
 end
 
-AddHoverEffect(closeBtn, Color3.fromRGB(160, 165, 185), Color3.fromRGB(255, 255, 255))
-AddHoverEffect(minBtn, Color3.fromRGB(160, 165, 185), Color3.fromRGB(255, 255, 255))
+AddHoverEffect(closeBtn, Color3.fromRGB(150, 155, 170), Color3.fromRGB(255, 255, 255))
+AddHoverEffect(minBtn, Color3.fromRGB(150, 155, 170), Color3.fromRGB(255, 255, 255))
 
 -- ==============================================================================
--- Background Polling Loop
+-- Background Loops
 -- ==============================================================================
 task.spawn(function()
-    -- Immediate initial fetch
+    FetchOnlineCounter()
     FetchNewMessages()
 
     while screenGui and screenGui.Parent do
@@ -773,4 +1093,11 @@ task.spawn(function()
     end
 end)
 
-print("[Serenity Hub] 💬 Global Chat loaded successfully! Press RightShift to toggle.")
+task.spawn(function()
+    while screenGui and screenGui.Parent do
+        task.wait(15)
+        pcall(FetchOnlineCounter)
+    end
+end)
+
+print("[Serenity Hub] 💬 Custom Discord-style Global Chat loaded successfully! Press RightShift to toggle.")
