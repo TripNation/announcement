@@ -214,10 +214,10 @@ local function ShowAnnouncement(announcement)
     dismissBtn.Size = UDim2.new(0, 24, 0, 24)
     dismissBtn.Position = UDim2.new(1, -30, 0, 8)
     dismissBtn.BackgroundTransparency = 1
-    dismissBtn.Text = "✕"
+    dismissBtn.Text = "X"
     dismissBtn.TextColor3 = Color3.fromRGB(150, 155, 170)
     dismissBtn.Font = Enum.Font.GothamBold
-    dismissBtn.TextSize = 13
+    dismissBtn.TextSize = 12
     dismissBtn.ZIndex = 10002
     dismissBtn.Parent = card
 
