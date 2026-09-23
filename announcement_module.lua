@@ -15,12 +15,12 @@ local localPlayer = Players.LocalPlayer
 local AnnouncementConfig = {
     -- Change these to your website/API domain:
     ApiUrls = {
+        "http://localhost:3000/api/announcements/latest"
         "https://serenityhub.site/api/announcements/latest",
         "https://www.serenityhub.site/api/announcements/latest",
-        "http://localhost:3000/api/announcements/latest"
     },
     HubName = "Serenity",            -- Shown in the popup header (e.g. "Serenity Announcement")
-    PollInterval = 8,                 -- Seconds between checking for new announcements
+    PollInterval = 2,                 -- Seconds between checking for new announcements
     DebugMode = false                 -- Set to true to see console logs in executor
 }
 
