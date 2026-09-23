@@ -799,20 +799,26 @@ end
 MakeDraggable(headerBar, mainWindow)
 MakeDraggable(floatingPill, floatingPill)
 
+local RoomLanguageMap = {
+    general = "en",
+    indonesian = "id",
+    philippines = "tl",
+    vietnam = "vi",
+    brazilian = "pt"
+}
+
 -- ==============================================================================
 -- Format Mentions (@username) in Vibrant Cyan/Blue
 -- ==============================================================================
 local function FormatMentions(rawText)
     if not rawText then return "" end
-    -- Escape XML special characters first
     local safe = rawText:gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;")
-    -- Format @mentions
     safe = safe:gsub("(@[%w_]+)", "<font color=\"rgb(75,160,255)\">%1</font>")
     return safe
 end
 
 -- ==============================================================================
--- Render Individual Message Item (Exact Sena Style)
+-- Render Individual Message Item (Exact Sena Style + Auto Translation)
 -- ==============================================================================
 local function CreateMessageRow(msg)
     local row = Instance.new("Frame")
@@ -832,8 +838,15 @@ local function CreateMessageRow(msg)
     avatar.BackgroundColor3 = Color3.fromRGB(24, 27, 36)
     avatar.BorderSizePixel = 0
     
-    local uid = tonumber(msg.userId) or 1
-    avatar.Image = string.format("rbxthumb://type=AvatarHeadShot&id=%d&w=48&h=48", uid)
+    local isSystem = msg.system == true
+    local isAdmin = msg.isAdmin == true or msg.role == "Owner" or msg.role == "Admin"
+
+    if isSystem or (isAdmin and (not msg.userId or msg.userId == "0" or msg.userId == "1")) then
+        avatar.Image = "rbxassetid://10709790644"
+    else
+        local uid = tonumber(msg.userId) or 1
+        avatar.Image = string.format("rbxthumb://type=AvatarHeadShot&id=%d&w=48&h=48", uid)
+    end
     avatar.ScaleType = Enum.ScaleType.Fit
     avatar.Parent = row
 
@@ -848,8 +861,7 @@ local function CreateMessageRow(msg)
     headerLine.Position = UDim2.new(0, 48, 0, 0)
     headerLine.BackgroundTransparency = 1
     
-    local uName = tostring(msg.username or "Anonymous")
-    -- Subtle censor if desired or show real username
+    local uName = tostring(msg.displayName or msg.username or "Anonymous")
     local gameTag = tostring(msg.gameName or "Steal An Egg")
     local timeStr = tostring(msg.time or "11:01")
 
@@ -864,13 +876,40 @@ local function CreateMessageRow(msg)
     local colorIdx = ((tonumber(msg.userId) or #uName) % #nameColors) + 1
     local nameColor = nameColors[colorIdx]
 
+    -- Role Badges for Owner / Admin / System
+    local roleTag = ""
+    if isSystem then
+        roleTag = "<font color=\"rgb(255,200,50)\"><b>[SYSTEM]</b></font> "
+    elseif msg.role == "Owner" or (isAdmin and msg.role ~= "Admin") then
+        roleTag = "<font color=\"rgb(255,215,0)\"><b>[OWNER]</b></font> "
+    elseif msg.role == "Admin" or isAdmin then
+        roleTag = "<font color=\"rgb(0,210,255)\"><b>[ADMIN]</b></font> "
+    end
+
+    -- Dynamic Translation lookup based on current room
+    local langKey = RoomLanguageMap[currentRoom] or "en"
+    local rawText = tostring(msg.message or "")
+    local isTranslated = false
+
+    if msg.translations and type(msg.translations) == "table" and msg.translations[langKey] then
+        local tVal = tostring(msg.translations[langKey])
+        if tVal and tVal ~= "" and tVal ~= rawText then
+            rawText = tVal
+            isTranslated = true
+        end
+    end
+
+    local transBadge = isTranslated and "  <font color=\"rgb(80,180,255)\"><i>(translated)</i></font>" or ""
+
     headerLine.RichText = true
     headerLine.Text = string.format(
-        "<font color=\"rgb(%d,%d,%d)\"><b>%s</b></font>  <font color=\"rgb(130,138,155)\">%s  ·  %s</font>",
+        "%s<font color=\"rgb(%d,%d,%d)\"><b>%s</b></font>  <font color=\"rgb(130,138,155)\">%s  ·  %s</font>%s",
+        roleTag,
         nameColor.R * 255, nameColor.G * 255, nameColor.B * 255,
         uName,
         gameTag,
-        timeStr
+        timeStr,
+        transBadge
     )
     headerLine.Font = Enum.Font.GothamMedium
     headerLine.TextSize = 12
@@ -885,8 +924,8 @@ local function CreateMessageRow(msg)
     msgBody.AutomaticSize = Enum.AutomaticSize.Y
     msgBody.BackgroundTransparency = 1
     msgBody.RichText = true
-    msgBody.Text = FormatMentions(tostring(msg.message or ""))
-    msgBody.TextColor3 = Color3.fromRGB(225, 230, 240)
+    msgBody.Text = FormatMentions(rawText)
+    msgBody.TextColor3 = isSystem and Color3.fromRGB(255, 235, 175) or Color3.fromRGB(225, 230, 240)
     msgBody.Font = Enum.Font.GothamMedium
     msgBody.TextSize = 12
     msgBody.TextWrapped = true
@@ -900,7 +939,7 @@ local function CreateMessageRow(msg)
 end
 
 -- ==============================================================================
--- Filter & Render Message Feed
+-- Filter & Render Message Feed (Universal with Instant Language Switching)
 -- ==============================================================================
 function FilterAndRenderMessages()
     for _, child in ipairs(messagesScroll:GetChildren()) do
@@ -910,15 +949,20 @@ function FilterAndRenderMessages()
     end
 
     local qLower = searchQuery:lower()
+    local langKey = RoomLanguageMap[currentRoom] or "en"
 
     for _, msg in ipairs(allLoadedMessages) do
-        local roomMatch = (currentRoom == "all") or (not msg.room or msg.room:lower() == currentRoom:lower())
+        local displayTxt = tostring(msg.message or "")
+        if msg.translations and type(msg.translations) == "table" and msg.translations[langKey] then
+            displayTxt = tostring(msg.translations[langKey])
+        end
+
         local searchMatch = (qLower == "") 
-            or (msg.message and msg.message:lower():find(qLower, 1, true))
+            or (displayTxt and displayTxt:lower():find(qLower, 1, true))
             or (msg.username and msg.username:lower():find(qLower, 1, true))
             or (msg.gameName and msg.gameName:lower():find(qLower, 1, true))
 
-        if roomMatch and searchMatch then
+        if searchMatch then
             CreateMessageRow(msg)
         end
     end
