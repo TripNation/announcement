@@ -13,14 +13,14 @@ local Players = game:GetService("Players")
 local localPlayer = Players.LocalPlayer
 
 local AnnouncementConfig = {
-    -- Change these to your website/API domain:
+    -- Change or add your website/API domain:
     ApiUrls = {
-        "http://localhost:3000/api/announcements/latest"
+        "http://localhost:3000/api/announcements/latest",
         "https://serenityhub.site/api/announcements/latest",
-        "https://www.serenityhub.site/api/announcements/latest",
+        "https://www.serenityhub.site/api/announcements/latest"
     },
     HubName = "Serenity",            -- Shown in the popup header (e.g. "Serenity Announcement")
-    PollInterval = 2,                 -- Seconds between checking for new announcements
+    PollInterval = 2,                 -- ⚡ Checks every 2 seconds for near-instant delivery!
     DebugMode = false                 -- Set to true to see console logs in executor
 }
 
@@ -90,6 +90,37 @@ local function FetchLatestAnnouncement()
     return nil
 end
 
+-- Custom Serenity SH Logo loader (supports getcustomasset from github / localhost / domain)
+local cachedLogoAsset = nil
+local function GetLogoImage()
+    if cachedLogoAsset then return cachedLogoAsset end
+
+    -- Check if executor supports custom assets
+    local getAsset = (syn and syn.custom_asset) or getcustomasset or getsynasset
+    if getAsset and writefile and isfile then
+        local ok, asset = pcall(function()
+            if not isfile("serenity_logo_v2.png") then
+                local imgData = FetchRaw("http://localhost:3000/serenity_logo_v2.png")
+                    or FetchRaw("https://raw.githubusercontent.com/TripNation/Serenity-hub-main-COPY/main/serenity_logo_v2.png")
+                    or FetchRaw("https://serenityhub.site/serenity_logo_v2.png")
+                if imgData and #imgData > 200 then
+                    writefile("serenity_logo_v2.png", imgData)
+                end
+            end
+            if isfile("serenity_logo_v2.png") then
+                return getAsset("serenity_logo_v2.png")
+            end
+        end)
+        if ok and asset then
+            cachedLogoAsset = asset
+            return cachedLogoAsset
+        end
+    end
+
+    -- Clean fallback if executor does not support custom assets
+    return "rbxassetid://10709790644"
+end
+
 -- Animated UI Banner Popup
 local function ShowAnnouncement(announcement)
     -- Target GUI container
@@ -141,12 +172,12 @@ local function ShowAnnouncement(announcement)
     stroke.Color = Color3.fromRGB(55, 60, 75)
     stroke.Parent = card
 
-    -- Left Icon Holder
+    -- Left Logo Holder (with neon blue border and Serenity SH logo)
     local iconHolder = Instance.new("Frame")
     iconHolder.Name = "IconHolder"
-    iconHolder.Size = UDim2.new(0, 40, 0, 40)
-    iconHolder.Position = UDim2.new(0, 12, 0, 12)
-    iconHolder.BackgroundColor3 = Color3.fromRGB(88, 101, 242)
+    iconHolder.Size = UDim2.new(0, 42, 0, 42)
+    iconHolder.Position = UDim2.new(0, 12, 0, 13)
+    iconHolder.BackgroundColor3 = Color3.fromRGB(10, 11, 16)
     iconHolder.BorderSizePixel = 0
     iconHolder.ZIndex = 10000
     iconHolder.Parent = card
@@ -155,18 +186,26 @@ local function ShowAnnouncement(announcement)
     holderCorner.CornerRadius = UDim.new(0, 8)
     holderCorner.Parent = iconHolder
 
-    -- Bell / Megaphone Icon (Roblox asset)
-    local bellIcon = Instance.new("ImageLabel")
-    bellIcon.Name = "Icon"
-    bellIcon.Size = UDim2.new(0, 22, 0, 22)
-    bellIcon.Position = UDim2.new(0.5, 0, 0.5, 0)
-    bellIcon.AnchorPoint = Vector2.new(0.5, 0.5)
-    bellIcon.BackgroundTransparency = 1
-    bellIcon.Image = "rbxassetid://10709790644" -- Bell notification icon
-    bellIcon.ImageColor3 = Color3.fromRGB(255, 255, 255)
-    bellIcon.ScaleType = Enum.ScaleType.Fit
-    bellIcon.ZIndex = 10001
-    bellIcon.Parent = iconHolder
+    local holderStroke = Instance.new("UIStroke")
+    holderStroke.Thickness = 1.2
+    holderStroke.Color = Color3.fromRGB(0, 140, 255)
+    holderStroke.Parent = iconHolder
+
+    -- Serenity SH Logo Image
+    local logoImg = Instance.new("ImageLabel")
+    logoImg.Name = "LogoImage"
+    logoImg.Size = UDim2.new(1, 0, 1, 0)
+    logoImg.Position = UDim2.new(0.5, 0, 0.5, 0)
+    logoImg.AnchorPoint = Vector2.new(0.5, 0.5)
+    logoImg.BackgroundTransparency = 1
+    logoImg.Image = GetLogoImage()
+    logoImg.ScaleType = Enum.ScaleType.Fit
+    logoImg.ZIndex = 10001
+    logoImg.Parent = iconHolder
+
+    local logoCorner = Instance.new("UICorner")
+    logoCorner.CornerRadius = UDim.new(0, 8)
+    logoCorner.Parent = logoImg
 
     -- Dismiss Button 'X'
     local dismissBtn = Instance.new("TextButton")
@@ -289,12 +328,80 @@ local function ShowAnnouncement(announcement)
 end
 
 -- ==============================================================================
+-- 21 Supported Games Catalog & Place ID Mapping
+-- ==============================================================================
+local SupportedGames = {
+    ["103883942725157"] = "+1 Drain Water Per Click",
+    ["74102906764176"]  = "Greedy Growers",
+    ["91701030914075"]  = "+1 Monkey Evolution",
+    ["97824450589417"]  = "+1 Superhero Evolution",
+    ["103138601755519"] = "+1 Dino Evolution",
+    ["104809044319701"] = "+1 Phonk Evolution",
+    ["137233438285284"] = "Chicken Farm",
+    ["90086669327265"]  = "+1 Cut Grass Adventure",
+    ["122572082932179"] = "Sell Ores",
+    ["108307565942574"] = "Heroes RNG",
+    ["98894876188248"]  = "Cheating During Testing [BETA]",
+    ["107653945083776"] = "Roll Anime to Fight!",
+    ["122951224417794"] = "Unscathed RNG",
+    ["109530157755211"] = "Lift A Cube",
+    ["122245938604556"] = "+1 Tongue Escape",
+    ["122216176958450"] = "Steal A Seed!",
+    ["125927821145949"] = "Mine a Mountain",
+    ["76377501906469"]  = "Steal And Hatch Anime Egg!",
+    ["124216119978534"] = "Ride A Pet",
+    ["86259628805375"]  = "+1 Strength to Grow your arm!",
+    ["113290951185459"] = "Anime Dice"
+}
+
+-- Checks whether the current game matches the broadcast targeting
+local function ShouldShowAnnouncement(announcement)
+    if not announcement or not announcement.active then
+        return false
+    end
+
+    local target = string.lower(announcement.target or "everyone")
+    local targetMod = string.lower(announcement.targetModule or "")
+    local targetPlaceId = tostring(announcement.targetPlaceId or "")
+
+    -- 1. Broadcast to Everyone / All Supported Games
+    if target == "everyone" or targetMod == "" or targetMod == "all" or targetMod == "everyone" then
+        return true
+    end
+
+    -- 2. Game-Specific Targeting
+    local currentPlaceId = tostring(game.PlaceId)
+    local currentGameName = string.lower(SupportedGames[currentPlaceId] or "")
+
+    -- Match by exact PlaceId
+    if targetPlaceId ~= "" and targetPlaceId ~= "all" then
+        if targetPlaceId == currentPlaceId then
+            return true
+        end
+    end
+
+    -- Match by targetModule (which may be the PlaceId or game name)
+    if targetMod ~= "" and targetMod ~= "all" then
+        if targetMod == currentPlaceId then
+            return true
+        end
+        if currentGameName ~= "" and (targetMod == currentGameName or string.find(currentGameName, targetMod, 1, true) or string.find(targetMod, currentGameName, 1, true)) then
+            return true
+        end
+    end
+
+    return false
+end
+
+-- ==============================================================================
 -- Background Polling Service
 -- ==============================================================================
 local function StartAnnouncementListener()
     task.spawn(function()
         if AnnouncementConfig.DebugMode then
-            print(string.format("[%s] 📢 Announcement poller started.", AnnouncementConfig.HubName))
+            local pId = tostring(game.PlaceId)
+            local gName = SupportedGames[pId] or "Unknown Game"
+            print(string.format("[%s] 📢 Announcement listener active on '%s' (Place ID: %s)", AnnouncementConfig.HubName, gName, pId))
         end
 
         while true do
@@ -302,14 +409,16 @@ local function StartAnnouncementListener()
                 local announcement = FetchLatestAnnouncement()
                 if announcement and announcement.id and announcement.active then
                     local idStr = tostring(announcement.id)
-                    -- Only display if the user hasn't seen this announcement ID yet
+                    -- Check if not displayed in this session
                     if not _G.HubSeenAnnouncements[idStr] then
                         _G.HubSeenAnnouncements[idStr] = true
-                        ShowAnnouncement(announcement)
+                        if ShouldShowAnnouncement(announcement) then
+                            ShowAnnouncement(announcement)
+                        end
                     end
                 end
             end)
-            task.wait(AnnouncementConfig.PollInterval or 8)
+            task.wait(AnnouncementConfig.PollInterval or 2)
         end
     end)
 end
